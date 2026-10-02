@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ctOS Earth OSINT Monitor</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    :root {
+      --bg-color: #06080c;
+      --panel-bg: rgba(10, 14, 23, 0.88);
+      --border-color: #00f3ff;
+      --text-main: #d0f7ff;
+      --accent-cyan: #00f3ff;
+      --accent-red: #ff0055;
+      --accent-amber: #ffaa00;
+      --font-mono: "Courier New", Courier, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top HUD Bar */
+    header {
+      height: 42px;
+      background: var(--panel-bg);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      z-index: 1000;
+      box-shadow: 0 0 12px rgba(0,243,255,0.2);
+    }
+
+    header .logo {
+      color: var(--accent-cyan);
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    header .logo::before {
+      content: "●";
+      color: var(--accent-red);
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    header .hud-stats {
+      display: flex;
+      gap: 20px;
+    }
+
+    /* Main Container */
+    #main {
+      flex: 1;
+      display: flex;
+      position: relative;
+    }
+
+    /* Map Viewport */
+    #map {
+      flex: 1;
+      background: #000;
+      z-index: 1;
+    }
+
+    /* Scanlines effect */
+    #main::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15),
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 2px
+      );
+      pointer-events: none;
+      z-index: 500;
+    }
+
+    /* Kanban HUD Sidebar */
+    #sidebar {
+      width: 360px;
+      background: var(--panel-bg);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      z-index: 1000;
+      backdrop-filter: blur(4px);
+    }
+
+    .sidebar-header {
+      padding: 12px;
+      border-bottom: 1px solid rgba(0,243,255,0.3);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .sidebar-header h2 {
+      font-size: 14px;
+      color: var(--accent-cyan);
+      text-transform: uppercase;
+    }
+
+    .btn-add {
+      background: transparent;
+      border: 1px solid var(--accent-cyan);
+      color: var(--accent-cyan);
+      padding: 4px 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+
+    .btn-add:hover {
+      background: var(--accent-cyan);
+      color: #000;
+    }
+
+    /* Kanban Board Columns */
+    .kanban-board {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .kanban-column {
+      background: rgba(0, 243, 255, 0.03);
+      border: 1px dashed rgba(0, 243, 255, 0.25);
+      border-radius: 2px;
+      padding: 8px;
+    }
+
+    .column-title {
+      font-size: 11px;
+      color: var(--accent-amber);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .cards-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 40px;
+    }
+
+    .kanban-card {
+      background: rgba(10, 20, 35, 0.9);
+      border: 1px solid rgba(0, 243, 255, 0.4);
+      padding: 8px;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .kanban-card:hover {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 8px rgba(0, 243, 255, 0.4);
+      transform: translateX(-2px);
+    }
+
+    .kanban-card.selected {
+      border-color: var(--accent-red);
+      box-shadow: 0 0 10px rgba(255, 0, 85, 0.5);
+    }
+
+    .card-title {
+      font-size: 12px;
+      color: #fff;
+      font-weight: bold;
+    }
+
+    .card-meta {
+      font-size: 10px;
+      color: #88aacc;
+      margin-top: 4px;
+    }
+
+    .card-actions {
+      margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .card-btn {
+      background: none;
+      border: 1px solid rgba(0,243,255,0.3);
+      color: var(--accent-cyan);
+      font-size: 9px;
+      padding: 2px 4px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+    }
+
+    .card-btn:hover { background: rgba(0,243,255,0.2); }
+    .card-btn.delete { color: var(--accent-red); border-color: rgba(255,0,85,0.3); }
+    .card-btn.delete:hover { background: rgba(255,0,85,0.2); }
+
+    /* Custom Leaflet Map Controls */
+    .leaflet-container {
+      font-family: var(--font-mono) !important;
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: var(--panel-bg);
+      border: 1px solid var(--accent-cyan);
+      color: var(--text-main);
+      border-radius: 0;
+      font-family: var(--font-mono);
+    }
+
+    .leaflet-popup-tip { background: var(--border-color); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">ctOS v4.2 // EARTH OSINT OVERLAY</div>
+    <div class="hud-stats">
+      <span>LAT/LON: <span id="hud-coords">0.0000, 0.0000</span></span>
+      <span>TARGETS: <span id="hud-target-count">0</span></span>
+      <span>FEED: <span id="hud-feed-status" style="color:var(--accent-cyan)">ACTIVE</span></span>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="map"></div>
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <h2>Target Tracking Kanban</h2>
+        <button class="btn-add" id="btn-new-target">+ ADD TARGET</button>
+      </div>
+      <div class="kanban-board">
+        <div class="kanban-column" id="col-queue" data-status="queue">
+          <div class="column-title"><span>[01] QUEUED TARGETS</span><span class="count">0</span></div>
+          <div class="cards-container"></div>
+        </div>
+        <div class="kanban-column" id="col-active" data-status="active">
+          <div class="column-title"><span>[02] ACTIVE TRACKING</span><span class="count">0</span></div>
+          <div class="cards-container"></div>
+        </div>
+        <div class="kanban-column" id="col-resolved" data-status="resolved">
+          <div class="column-title"><span>[03] FLAGGED / CONTAINED</span><span class="count">0</span></div>
+          <div class="cards-container"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Initial Targets State
+    let targets = [
+      { id: "t1", title: "Node Alpha-7", status: "queue", lat: 37.7749, lng: -122.4194, type: "Server Node" },
+      { id: "t2", title: "Anomalous Seismic Signal", status: "active", lat: 35.6762, lng: 139.6503, type: "Seismic Alert" },
+      { id: "t3", title: "Subsea Cable Landing", status: "resolved", lat: 51.5074, lng: -0.1278, type: "Infrastructure" }
+    ];
+
+    let map, markers = {};
+
+    function initMap() {
+      // Dark CartoDB Map
+      map = L.map('map', { zoomControl: false }).setView([20, 0], 2);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        maxZoom: 19
+      }).addTo(map);
+
+      L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+      // Track Mouse Coordinates
+      map.on('mousemove', (e) => {
+        document.getElementById('hud-coords').innerText =
+          `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`;
+      });
+
+      // Load USGS Live Earthquake Feed Overlay
+      fetchUSGSFeed();
+      
+      renderBoard();
+    }
+
+    function fetchUSGSFeed() {
+      fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson')
+        .then(res => res.json())
+        .then(data => {
+          L.geoJSON(data, {
+            pointToLayer: (feature, latlng) => {
+              const mag = feature.properties.mag || 1;
+              return L.circleMarker(latlng, {
+                radius: Math.max(3, mag * 2),
+                fillColor: '#ff0055',
+                color: '#ff0055',
+                weight: 1,
+                opacity: 0.8,
+                fillOpacity: 0.4
+              });
+            },
+            onEachFeature: (feature, layer) => {
+              layer.bindPopup(`<b>USGS SIGNAL</b><br/>${feature.properties.title}<br/>Mag: ${feature.properties.mag}`);
+            }
+          }).addTo(map);
+        })
+        .catch(() => {
+          document.getElementById('hud-feed-status').innerText = 'OFFLINE';
+          document.getElementById('hud-feed-status').style.color = 'var(--accent-red)';
+        });
+    }
+
+    function renderBoard() {
+      // Clear columns
+      document.querySelectorAll('.cards-container').forEach(c => c.innerHTML = '');
+      
+      // Clear target markers
+      Object.values(markers).forEach(m => map.removeLayer(m));
+      markers = {};
+
+      let counts = { queue: 0, active: 0, resolved: 0 };
+
+      targets.forEach(t => {
+        counts[t.status]++;
+
+        // Add Marker to Map
+        const marker = L.marker([t.lat, t.lng], {
+          draggable: true
+        }).addTo(map);
+
+        marker.bindPopup(`<b>[${t.id.toUpperCase()}] ${t.title}</b><br/>Type: ${t.type}<br/>Status: ${t.status}`);
+
+        marker.on('dragend', (e) => {
+          const newPos = e.target.getLatLng();
+          t.lat = newPos.lat;
+          t.lng = newPos.lng;
+          renderBoard();
+        });
+
+        markers[t.id] = marker;
+
+        // Create Kanban Card
+        const card = document.createElement('div');
+        card.className = 'kanban-card';
+        card.innerHTML = `
+          <div class="card-title">${t.title}</div>
+          <div class="card-meta">POS: ${t.lat.toFixed(2)}, ${t.lng.toFixed(2)} | ${t.type}</div>
+          <div class="card-actions">
+            <button class="card-btn" onclick="panToTarget('${t.id}')">LOCATE</button>
+            <button class="card-btn" onclick="advanceStatus('${t.id}')">MOVE →</button>
+            <button class="card-btn delete" onclick="deleteTarget('${t.id}')">DEL</button>
+          </div>
+        `;
+
+        const container = document.querySelector(`#col-${t.status} .cards-container`);
+        if (container) container.appendChild(card);
+      });
+
+      // Update Header & Column Counters
+      document.getElementById('hud-target-count').innerText = targets.length;
+      document.querySelector('#col-queue .count').innerText = counts.queue;
+      document.querySelector('#col-active .count').innerText = counts.active;
+      document.querySelector('#col-resolved .count').innerText = counts.resolved;
+    }
+
+    function panToTarget(id) {
+      const target = targets.find(t => t.id === id);
+      if (target && markers[id]) {
+        map.flyTo([target.lat, target.lng], 8);
+        markers[id].openPopup();
+      }
+    }
+
+    function advanceStatus(id) {
+      const target = targets.find(t => t.id === id);
+      if (!target) return;
+      if (target.status === 'queue') target.status = 'active';
+      else if (target.status === 'active') target.status = 'resolved';
+      else if (target.status === 'resolved') target.status = 'queue';
+      renderBoard();
+    }
+
+    function deleteTarget(id) {
+      targets = targets.filter(t => t.id !== id);
+      renderBoard();
+    }
+
+    document.getElementById('btn-new-target').addEventListener('click', () => {
+      const center = map.getCenter();
+      const newId = 't' + (Date.now() % 10000);
+      targets.push({
+        id: newId,
+        title: `Target #${newId}`,
+        status: 'queue',
+        lat: center.lat,
+        lng: center.lng,
+        type: 'User Pin'
+      });
+      renderBoard();
+    });
+
+    window.onload = initMap;
+  </script>
+</body>
+</html>
